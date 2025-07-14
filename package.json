@@ -1,0 +1,17 @@
+
+{
+  "name": "electron",
+  "productName": "electron",
+  "description": "My Electron application description",
+  "keywords": [],
+  "main": "./main.js",
+  "version": "1.0.0",
+  "author": "zhongwei.wang",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "38.0.0-alpha.3"
+  }
+}
