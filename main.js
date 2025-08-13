@@ -28,7 +28,7 @@ function createWindow () {
     }
   })
 
-  osr.loadURL("https://discover.matterport.com/space/Sf6wPm9oCas")
+  osr.loadURL("https://wp.pl")
   osr.webContents.on('paint', (e, dirty, img) => {
     console.log(JSON.stringify(e,null,2));
     //spout.updateTexture(e.texture.textureInfo)
