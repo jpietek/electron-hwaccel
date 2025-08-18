@@ -2,40 +2,51 @@
 const { app, BrowserWindow } = require('electron')
 const path = require('node:path')
 
+app.commandLine.appendSwitch('enable-gpu');
+app.commandLine.appendSwitch('no-sandbox')
+
 //const { SpoutOutput } = require("D:/electron-spout.node")
 //const spout = new SpoutOutput("ElectronFiddle")
 
-function createWindow () {
-  // Create the browser window.
-  const mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js')
-    }
-  })
+app.commandLine.appendSwitch('high-dpi-support', 1)
+app.commandLine.appendSwitch('force-device-scale-factor', 1)
 
-  mainWindow.loadURL("https://wp.pl")
+//app.disableHardwareAcceleration()
+
+function createWindow () {
+
+  const width = 1280;
+  const height = 720;
 
   // Create the browser window.
   const osr = new BrowserWindow({
-    width: 1280,
-    height: 720,
+    width,
+    height,
     webPreferences: {
       offscreen: {
-        useSharedTexture: true
-      }
+        useSharedTexture: true,
+    	sandbox: false
+      },
+    sandbox: false,
+    frame: false,
+    show: false
     }
   })
 
-  osr.loadURL("https://wp.pl")
+  osr.setBounds({ x: 0, y: 0, width, height });
+  osr.setSize(width, height);
+
+  osr.webContents.setFrameRate(60);
+  osr.webContents.invalidate();	
+
+  osr.loadURL("https://app.singular.live/output/6W76ei5ZNekKkYhe8nw5o8/Output?aspect=16:9")
   osr.webContents.on('paint', (e, dirty, img) => {
     console.log(JSON.stringify(e,null,2));
     //spout.updateTexture(e.texture.textureInfo)
-    e.texture.release()
+    //e.texture.release()
   })
 
-  osr.webContents.openDevTools()
+  //osr.webContents.openDevTools()
 
   // Open the DevTools.
   // mainWindow.webContents.openDevTools()
