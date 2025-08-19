@@ -1,0 +1,18 @@
+source_set("cuda_loader") {
+  sources = [
+    "cuda_drvapi_dynlink.c",
+    "cuda_drvapi_dynlink.h",
+    "cuda_drvapi_dynlink_cuda.h",
+    "cuda_drvapi_dynlink_gl.h",
+    "cuda_wrapper_include.h",
+    "drvapi_error_string.h",
+    "cudaEGL.h"
+  ]
+
+  public_deps = [
+    "//base",
+  ]
+
+  defines = [ "__CUDA_API_VERSION=7000" ]
+
+}
