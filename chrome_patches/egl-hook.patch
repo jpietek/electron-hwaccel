@@ -1,0 +1,359 @@
+diff --git a/components/BUILD.gn b/components/BUILD.gn
+index d6914365c5467..37b5156292699 100644
+--- a/components/BUILD.gn
++++ b/components/BUILD.gn
+@@ -546,6 +546,7 @@ test("components_unittests") {
+     deps += [ "//components/enterprise/idle:unit_tests" ]
+   }
+ 
++
+   if (is_linux || is_win || is_mac) {
+     deps += [ "//components/named_system_lock:unit_tests" ]
+   }
+diff --git a/components/viz/BUILD.gn b/components/viz/BUILD.gn
+index 31954124d290f..e5a05793a7f45 100644
+--- a/components/viz/BUILD.gn
++++ b/components/viz/BUILD.gn
+@@ -104,3 +104,4 @@ if (is_android) {
+     srcjar_deps = [ ":java_features_srcjar" ]
+   }
+ }
++
+diff --git a/components/viz/service/BUILD.gn b/components/viz/service/BUILD.gn
+index 4aaf506c9fadb..0749ef90faa36 100644
+--- a/components/viz/service/BUILD.gn
++++ b/components/viz/service/BUILD.gn
+@@ -323,6 +323,7 @@ viz_component("service") {
+     "//ui/display/types",
+     "//ui/gfx/animation",
+     "//ui/gfx/animation/keyframe",
++    "//components/viz/service/display_embedder/cuda_loader"
+   ]
+ 
+   public_deps = [
+@@ -451,6 +452,7 @@ viz_component("service") {
+       "//ui/events:gesture_detection",
+       "//ui/events/blink",
+     ]
++
+   }
+ 
+   if (use_ozone) {
+@@ -495,13 +497,13 @@ viz_component("service") {
+     libs = [
+       "d3d11.lib",
+       "dxgi.lib",
+-      "dcomp.lib",
++      "dcomp.lib"
+     ]
+ 
+     ldflags = [
+       "/DELAYLOAD:d3d11.dll",
+       "/DELAYLOAD:dxgi.dll",
+-      "/DELAYLOAD:dcomp.dll",
++      "/DELAYLOAD:dcomp.dll"
+     ]
+ 
+     # SkiaOutputDeviceBufferQueue doesn't support Windows.
+diff --git a/components/viz/service/display_embedder/skia_output_device_offscreen.cc b/components/viz/service/display_embedder/skia_output_device_offscreen.cc
+index f665cfac5ff18..4ce815eda3d84 100644
+--- a/components/viz/service/display_embedder/skia_output_device_offscreen.cc
++++ b/components/viz/service/display_embedder/skia_output_device_offscreen.cc
+@@ -88,6 +88,19 @@ void SkiaOutputDeviceOffscreen::Present(
+   // Reshape should have been called first.
+   DCHECK(backend_texture_.isValid() || graphite_texture_.isValid());
+ 
++  // Capture swap-start as early as possible for offscreen ack.
++  const base::TimeTicks swap_start = base::TimeTicks::Now();
++
++  // If using GL-backed Ganesh offscreen texture and a hook is provided, emit
++  // the GLuint along with the swap-start time.
++  if (offscreen_gl_present_hook_ && backend_texture_.isValid() &&
++      backend_texture_.backend() == GrBackendApi::kOpenGL) {
++    GrGLTextureInfo tex_info;
++    if (GrBackendTextures::GetGLTextureInfo(backend_texture_, &tex_info)) {
++      offscreen_gl_present_hook_.Run(static_cast<GrGLuint>(tex_info.fID), swap_start);
++    }
++  }
++
+   StartSwapBuffers(std::move(feedback));
+   FinishSwapBuffers(gfx::SwapCompletionResult(gfx::SwapResult::SWAP_ACK),
+                     gfx::Size(size_.width(), size_.height()), std::move(frame));
+diff --git a/components/viz/service/display_embedder/skia_output_device_offscreen.h b/components/viz/service/display_embedder/skia_output_device_offscreen.h
+index 63823822a3963..06f3172ee0be2 100644
+--- a/components/viz/service/display_embedder/skia_output_device_offscreen.h
++++ b/components/viz/service/display_embedder/skia_output_device_offscreen.h
+@@ -12,6 +12,9 @@
+ #include "third_party/skia/include/core/SkColorSpace.h"
+ #include "third_party/skia/include/core/SkImageInfo.h"
+ #include "third_party/skia/include/gpu/graphite/BackendTexture.h"
++#include "third_party/skia/include/gpu/ganesh/gl/GrGLTypes.h"
++#include "base/functional/callback.h"
++#include "base/time/time.h"
+ 
+ namespace viz {
+ 
+@@ -42,6 +45,14 @@ class SkiaOutputDeviceOffscreen : public SkiaOutputDevice {
+   void EndPaint() override;
+   void ReadbackForTesting(base::OnceCallback<void(SkBitmap)> callback) override;
+ 
++  // Hook for strictly offscreen GL path to obtain the GL texture id and the
++  // corresponding swap-start timestamp just before acknowledging the swap.
++  using OffscreenGlPresentHook =
++      base::RepeatingCallback<void(GrGLuint /*texture_id*/, base::TimeTicks /*swap_start*/)>;
++  void SetOffscreenGlPresentHook(OffscreenGlPresentHook hook) {
++    offscreen_gl_present_hook_ = std::move(hook);
++  }
++
+  protected:
+   scoped_refptr<gpu::SharedContextState> context_state_;
+   const bool has_alpha_;
+@@ -56,6 +67,7 @@ class SkiaOutputDeviceOffscreen : public SkiaOutputDevice {
+ 
+  private:
+   uint64_t backbuffer_estimated_size_ = 0;
++  OffscreenGlPresentHook offscreen_gl_present_hook_;
+ };
+ 
+ }  // namespace viz
+diff --git a/components/viz/service/display_embedder/skia_output_surface_impl_on_gpu.cc b/components/viz/service/display_embedder/skia_output_surface_impl_on_gpu.cc
+index 370f9ef85e95b..6ab988db0d94e 100644
+--- a/components/viz/service/display_embedder/skia_output_surface_impl_on_gpu.cc
++++ b/components/viz/service/display_embedder/skia_output_surface_impl_on_gpu.cc
+@@ -95,6 +95,8 @@
+ #include "ui/gl/gl_surface.h"
+ #include "ui/gl/presenter.h"
+ #include "ui/gl/progress_reporter.h"
++#include "ui/gl/gl_bindings.h"
++#include "ui/gl/gl_context.h"
+ #include "url/gurl.h"
+ 
+ #if BUILDFLAG(IS_WIN)
+@@ -134,8 +136,23 @@
+ #include "components/viz/service/display_embedder/output_presenter_fuchsia.h"
+ #endif
+ 
++#define CUDA_INIT_OPENGL
++#include "cuda_loader/cuda_wrapper_include.h"
++#include "cuda_loader/cuda_drvapi_dynlink_gl.h"
++
+ namespace viz {
+ 
++bool cuda_init = false;
++
++CUcontext cu_ctx;
++size_t cuda_memory_width = 3840; 
++size_t cuda_memory_height = 2160;
++CUdeviceptr cuda_memory;
++CUipcMemHandle ipc_handle;
++CUgraphicsResource cuda_resource;
++CUarray cuda_array;
++EGLImageKHR egl_image;
++
+ namespace {
+ 
+ template <typename... Args>
+@@ -144,7 +161,7 @@ void PostAsyncTaskRepeatedly(
+     const base::RepeatingCallback<void(Args...)>& callback,
+     Args... args) {
+   // Callbacks generated by this function may be executed asynchronously
+-  // (e.g. by presentation feedback) after |impl_on_gpu| has been destroyed.
++  // (e.g. by presentation feedback) after |impl_on_pu| has been destroyed.
+   if (impl_on_gpu) {
+     impl_on_gpu->PostTaskToClientThread(base::BindOnce(callback, args...));
+   }
+@@ -1957,6 +1974,143 @@ bool SkiaOutputSurfaceImplOnGpu::InitializeForGL() {
+         renderer_settings_.requires_alpha_channel,
+         shared_gpu_deps_->memory_tracker(),
+         GetDidSwapBuffersCompleteCallback());
++
++    // Sample hook: print GL texture id and swap-start time for strictly offscreen GL.
++    static_cast<SkiaOutputDeviceOffscreen*>(output_device_.get())
++        ->SetOffscreenGlPresentHook(base::BindRepeating(
++            [](GrGLuint texture_id, base::TimeTicks swap_start) {
++              fprintf(stdout, "[CudaOffscreenHook] tex=%u, swap_start(us)=%lld\n",
++                      static_cast<unsigned>(texture_id),
++                      static_cast<long long>(
++                          (swap_start - base::TimeTicks()).InMicroseconds()));
++
++              if (!cuda_init) {
++		fprintf(stdout, "[CudaOffscreenHook] before cu init");
++                CHECK_CU(cuInit_drvapi(0, 7000));
++
++		int dev_count;
++		CHECK_CU(cuDeviceGetCount(&dev_count));
++                fprintf(stdout, "[CudaOffscreenHook] cu dev count %u", dev_count);
++		fflush(stdout);
++		if (!dev_count) {
++                   fprintf(stdout, "[CudaOffscreenHook] no cuda device present");
++		   return;
++		}
++		CUdevice device = 0;
++		CHECK_CU(cuDeviceGet(&device, 0));
++
++		char name[128] = {};
++		CHECK_CU(cuDeviceGetName(name, sizeof(name), device));
++
++		fprintf(stdout, "[CudaOffscreenHook] device_ordinal=%d device_count=%d device_name=%s",
++		   static_cast<int>(device), dev_count, name);
++		fflush(stdout);
++
++		CHECK_CU(cuCtxCreate(&cu_ctx, 0, device));
++		int current_dev = -1;
++		CHECK_CU(cuCtxGetDevice(&current_dev));
++		fprintf(stdout, "[CudaOffscreenHook] current_ctx_device=%d\n", current_dev);
++		fflush(stdout);
++
++                CHECK_CU(cuMemAlloc(&cuda_memory, cuda_memory_width * cuda_memory_height * 4));
++                CHECK_CU(cuIpcGetMemHandle(&ipc_handle, cuda_memory));
++
++                cuda_init = true;
++
++	                        fprintf(stdout, "[CudaOffscreenHook] cuda init ok");
++                fflush(stdout);
++              }
++
++	        EGLDisplay egl_display = eglGetCurrentDisplay();
++	        EGLContext egl_context = eglGetCurrentContext();
++
++		if (egl_display == EGL_NO_DISPLAY || egl_context == EGL_NO_CONTEXT) {
++		        fprintf(stdout, "[CudaOffscreenHook] No EGL display/context\n");
++			    return;
++	        }
++                
++		//EGLAttrib attrs[] = { EGL_GL_TEXTURE_LEVEL, 0, EGL_NONE };
++		EGLint attrs[] = { EGL_IMAGE_PRESERVED_KHR, EGL_FALSE, EGL_NONE };
++	        fprintf(stdout, "before egl image");
++                egl_image = eglCreateImageKHR(egl_display, egl_context,
++                                   EGL_GL_TEXTURE_2D,
++                                   (EGLClientBuffer)(uintptr_t)texture_id,
++                                   attrs);
++		EGLint err = eglGetError();
++		if (egl_image == EGL_NO_IMAGE_KHR || err != EGL_SUCCESS) {
++	            fprintf(stdout, "eglCreateImage failed: 0x%x\n", err);
++		    fflush(stdout);
++		    return;
++		} 
++
++                fprintf(stdout, "[CudaOffscreenHook] Created EGLImage %p from texture %u\n", egl_image, texture_id);
++	        //CHECK_CU(cuGraphicsEGLRegisterImage(&cuda_resource, egl_image, CU_GRAPHICS_MAP_RESOURCE_FLAGS_READ_ONLY));
++	        //CHECK_CU(cuGraphicsMapResources(1, &cuda_resource, 0));
++                //fprintf(stdout, "[CudaOffscreenHook] unregister image");
++	    	//CHECK_CU(cuGraphicsUnregisterResource(cuda_resource));
++                fprintf(stdout, "[CudaOffscreenHook] destroy image");
++	        eglDestroyImage(egl_display, egl_image);
++
++	    //CHECK_CU(cuGraphicsGLRegisterImage(&cuda_resource, texture_id, GL_TEXTURE_2D, CU_GRAPHICS_REGISTER_FLAGS_NONE));
++	    //CHECK_CU(cuGraphicsMapResources(1, &cuda_resource, 0));
++            //CHECK_CU(cuGraphicsSubResourceGetMappedArray(&cuda_array, cuda_resource, 0, 0));
++
++            /*CUDA_ARRAY_DESCRIPTOR d;
++            d.Width       = 1280;
++            d.Height      = 720;
++            d.Format      = CU_AD_FORMAT_UNSIGNED_INT8;  // 8-bit unsigned
++            d.NumChannels = 4;
++
++	    CHECK_CU(cuArrayCreate(&cuda_array, &d));*/
++
++
++	    /*CUeglFrame egl_frame;
++	    CHECK_CU(cuGraphicsResourceGetMappedEglFrame(&egl_frame, cuda_resource, 0, 0));
++
++	    if (egl_frame.frameType != CU_EGL_FRAME_TYPE_ARRAY) {
++	       fprintf(stdout, "egl frame is wrong");
++	       return;
++	    }
++
++	    cuda_array = egl_frame.frame.pArray[0];
++
++            CUDA_ARRAY_DESCRIPTOR desc;
++            CHECK_CU(cuArrayGetDescriptor(&desc, cuda_array));
++            fprintf(stdout,
++                 "[CudaOffscreenHook] desc.Width=%u desc.Height=%u desc.Format=%d desc.NumChannels=%u\n",
++                 desc.Width, desc.Height, static_cast<int>(desc.Format),
++                 desc.NumChannels);
++             fflush(stdout);
++
++	      CUDA_MEMCPY2D cpy = {
++                 .srcMemoryType = CU_MEMORYTYPE_ARRAY,
++                 .srcArray = cuda_array,
++
++                 .dstMemoryType = CU_MEMORYTYPE_DEVICE,
++                 .dstDevice = cuda_memory,
++		 .dstPitch = cuda_memory_width * 4,
++
++                 .WidthInBytes = desc.Width * 4,
++                 .Height = desc.Height
++            };
++
++            CUstream stream;
++            CHECK_CU(cuStreamCreate(&stream, 0));
++	    CHECK_CU(cuMemcpy2DAsync(&cpy, stream));
++            CHECK_CU(cuStreamSynchronize(stream));
++            CHECK_CU(cuStreamDestroy(stream));*/
++
++	    /*CHECK_CU(cuGraphicsUnmapResources(1, &cuda_resource, 0));
++	    cuGraphicsUnregisterResource(cuda_resource);
++            fprintf(stdout, "[CudaOffscreenHook] before cuda unregister resource");
++	    cuGraphicsUnregisterResource(cuda_resource);
++            fprintf(stdout, "[CudaOffscreenHook] before egl image destroy");
++	    eglDestroyImage(egl_display, egl_image);*/
++	    
++            fprintf(stdout, "[CudaOffscreenHook] memcpy ok");
++            fflush(stdout);
++              
++            }));
+   } else {
+     scoped_refptr<gl::Presenter> presenter = dependency_->CreatePresenter();
+     presenter_ = presenter.get();
+diff --git a/ui/gfx/linux/gpu_memory_buffer_support_x11.cc b/ui/gfx/linux/gpu_memory_buffer_support_x11.cc
+index 3cea47cc7de4c..06a8026931711 100644
+--- a/ui/gfx/linux/gpu_memory_buffer_support_x11.cc
++++ b/ui/gfx/linux/gpu_memory_buffer_support_x11.cc
+@@ -33,33 +33,40 @@ namespace {
+ // Obtain an authenticated DRM fd from X11 and create a GbmDevice with it.
+ std::unique_ptr<ui::GbmDevice> CreateX11GbmDevice() {
+   if (getenv("RUNNING_UNDER_RR") != nullptr) {
+-    LOG(WARNING) << "Running under rr, disabling dri3";
++    LOG(ERROR) << "Running under rr, disabling dri3";
+     return nullptr;
+   }
+ 
+   auto* connection = x11::Connection::Get();
+   // |connection| may be nullptr in headless mode.
+   if (!connection) {
+-    LOG(WARNING) << "Could not create x11 connection.";
++    LOG(ERROR) << "Could not create x11 connection.";
+     return nullptr;
+   }
++  LOG(ERROR) << "after x11 connection";
+ 
+   auto& dri3 = connection->dri3();
+   if (!dri3.present()) {
+-    LOG(WARNING) << "dri3 extension not supported.";
++    LOG(ERROR) << "dri3 extension not supported.";
+     return nullptr;
+   }
+ 
++  LOG(ERROR) << "after dri3 extension";
++
+   // Obtain an authenticated DRM fd.
+   auto reply = dri3.Open({connection->default_root(), 0}).Sync();
+-  if (!reply)
++  if (!reply) {
++    LOG(ERROR) << "dri3 open failed";
+     return nullptr;
+-
++  }
+   base::ScopedFD fd(HANDLE_EINTR(dup(reply->device_fd.get())));
+   if (!fd.is_valid())
++    LOG(ERROR) << "dri3 failed to get valid fd";
+     return nullptr;
+-  if (HANDLE_EINTR(fcntl(fd.get(), F_SETFD, FD_CLOEXEC)) == -1)
++  if (HANDLE_EINTR(fcntl(fd.get(), F_SETFD, FD_CLOEXEC)) == -1) {
++    LOG(ERROR) << "dri3 failed to get valid fd";
+     return nullptr;
++  }
+ 
+   return ui::CreateGbmDevice(fd.release());
+ }
