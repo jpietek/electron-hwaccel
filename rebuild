@@ -1,4 +1,4 @@
 #!/bin/bash
 rm -rf node_modules
 rm -rf ~/.cache/electron
-electron_use_remote_checksums=1 npm install --verbose --unsafe-perm=true --allow-root
+electron_use_remote_checksums=1 npm install --verbose

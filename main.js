@@ -25,11 +25,7 @@ function createWindow () {
     webPreferences: {
       offscreen: {
         useSharedTexture: true,
-    	sandbox: false
       },
-    sandbox: false,
-    frame: false,
-    show: false
     }
   })
 
@@ -43,7 +39,7 @@ function createWindow () {
   osr.webContents.on('paint', (e, dirty, img) => {
     console.log(JSON.stringify(e,null,2));
     //spout.updateTexture(e.texture.textureInfo)
-    //e.texture.release()
+    e.texture.release()
   })
 
   //osr.webContents.openDevTools()
