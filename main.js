@@ -5,13 +5,8 @@ const path = require('node:path')
 app.commandLine.appendSwitch('enable-gpu');
 app.commandLine.appendSwitch('no-sandbox')
 
-//const { SpoutOutput } = require("D:/electron-spout.node")
-//const spout = new SpoutOutput("ElectronFiddle")
-
 app.commandLine.appendSwitch('high-dpi-support', 1)
 app.commandLine.appendSwitch('force-device-scale-factor', 1)
-
-//app.disableHardwareAcceleration()
 
 function createWindow () {
 
@@ -24,12 +19,10 @@ function createWindow () {
     height,
     webPreferences: {
       offscreen: {
-        useSharedTexture: true,
-    	sandbox: false
+        useSharedTexture: true
       },
-    sandbox: false,
-    frame: false,
-    show: false
+      sandbox: false,
+      show: false
     }
   })
 
@@ -42,14 +35,10 @@ function createWindow () {
   osr.loadURL("https://app.singular.live/output/6W76ei5ZNekKkYhe8nw5o8/Output?aspect=16:9")
   osr.webContents.on('paint', (e, dirty, img) => {
     console.log(JSON.stringify(e,null,2));
-    //spout.updateTexture(e.texture.textureInfo)
-    //e.texture.release()
+    e.texture.release()
   })
 
   //osr.webContents.openDevTools()
-
-  // Open the DevTools.
-  // mainWindow.webContents.openDevTools()
 }
 
 // This method will be called when Electron has finished
