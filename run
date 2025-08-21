@@ -1,2 +1,0 @@
-#!/bin/bash
-DISPLAY=:0 node_modules/.bin/electron main.js --use-gl=angle --use-angle=gl --no-sandbox

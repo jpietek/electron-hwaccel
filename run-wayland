@@ -1,0 +1,2 @@
+#!/bin/bash
+WAYLAND_DISPLAY=wayland-1 node_modules/.bin/electron main.js --ozone-platform=wayland

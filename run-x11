@@ -1,0 +1,2 @@
+#!/bin/bash
+DISPLAY=:0 node_modules/.bin/electron main.js --ozone-platform=x11
