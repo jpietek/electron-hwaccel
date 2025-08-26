@@ -3,10 +3,12 @@ const { app, BrowserWindow } = require('electron')
 const path = require('node:path')
 
 app.commandLine.appendSwitch('enable-gpu');
-app.commandLine.appendSwitch('no-sandbox')
+app.commandLine.appendSwitch('no-sandbox');
 
-app.commandLine.appendSwitch('high-dpi-support', 1)
-app.commandLine.appendSwitch('force-device-scale-factor', 1)
+app.commandLine.appendSwitch('use-angle', 'gl-egl');
+
+app.commandLine.appendSwitch('high-dpi-support', 1);
+app.commandLine.appendSwitch('force-device-scale-factor', 1);
 
 function createWindow () {
 
