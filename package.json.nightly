@@ -11,6 +11,6 @@
     "start": "electron ."
   },
   "dependencies": {
-    "electron-nightly": "39.0.0-nightly.20250825""
+    "electron-nightly": "39.0.0-nightly.20250825"
   }
 }
