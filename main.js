@@ -1,6 +1,5 @@
 // Modules to control application life and create native browser window
 const { app, BrowserWindow } = require('electron')
-const path = require('node:path')
 
 app.commandLine.appendSwitch('enable-gpu');
 app.commandLine.appendSwitch('no-sandbox');
@@ -10,10 +9,20 @@ app.commandLine.appendSwitch('use-angle', 'gl-egl');
 app.commandLine.appendSwitch('high-dpi-support', 1);
 app.commandLine.appendSwitch('force-device-scale-factor', 1);
 
+// Statistics for paint callbacks where texture is not null
+const STATS_INTERVAL_MS = 3000;
+let nonNullTexturePaintCount = 0;
+
+setInterval(() => {
+  const avgPerSecond = nonNullTexturePaintCount / (STATS_INTERVAL_MS / 1000);
+  console.log(`paint(non-null) avg: ${avgPerSecond.toFixed(2)}/s over ${STATS_INTERVAL_MS / 1000}s (${nonNullTexturePaintCount} calls)`);
+  nonNullTexturePaintCount = 0;
+}, STATS_INTERVAL_MS);
+
 function createWindow () {
 
-  const width = 1280;
-  const height = 720;
+  const width = 1920;
+  const height = 1080;
 
   // Create the browser window.
   const osr = new BrowserWindow({
@@ -28,15 +37,19 @@ function createWindow () {
     }
   })
 
-  osr.setBounds({ x: 0, y: 0, width, height });
-  osr.setSize(width, height);
+  //osr.setBounds({ x: 0, y: 0, width, height });
+  //osr.setSize(width, height);
 
-  osr.webContents.setFrameRate(60);
-  osr.webContents.invalidate();	
+  //osr.webContents.setFrameRate(60);
+  //osr.webContents.invalidate();	
 
   osr.loadURL("https://app.singular.live/output/6W76ei5ZNekKkYhe8nw5o8/Output?aspect=16:9")
   osr.webContents.on('paint', (e, dirty, img) => {
-    console.log(JSON.stringify(e,null,2));
+    if (!e.texture) {
+      console.log("skip null texture");
+      return;
+    }
+    nonNullTexturePaintCount++;
     e.texture.release()
   })
 
