@@ -9,6 +9,11 @@ const zmqClient = new zmq.Request()
 let zmqConnectPromise = null
 let zmqQueue = Promise.resolve()
 
+// Paint statistics
+let paintCount = 0
+let lastStatsTime = Date.now()
+let statsInterval = null
+
 async function ensureZmqConnected () {
   if (!zmqConnectPromise) {
     zmqConnectPromise = (async () => {
@@ -69,6 +74,7 @@ function createWindow () {
 
   osr.loadURL("https://app.singular.live/output/6W76ei5ZNekKkYhe8nw5o8/Output?aspect=16:9")
   osr.webContents.on('paint', async (e, dirty, img) => {
+    paintCount++
     try {
       await enqueueZmqSend(e.texture)
     } catch (err) {
@@ -77,6 +83,16 @@ function createWindow () {
       e.texture.release()
     }
   })
+
+  // Start paint statistics reporting
+  statsInterval = setInterval(() => {
+    const now = Date.now()
+    const elapsed = (now - lastStatsTime) / 1000 // seconds
+    const paintsPerSecond = paintCount / elapsed
+    console.log(`Paint stats: ${paintCount} paints in ${elapsed.toFixed(1)}s = ${paintsPerSecond.toFixed(1)} paints/sec`)
+    paintCount = 0
+    lastStatsTime = now
+  }, 3000)
 
   //osr.webContents.openDevTools()
 }
@@ -98,6 +114,9 @@ app.whenReady().then(() => {
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
 app.on('window-all-closed', function () {
+  if (statsInterval) {
+    clearInterval(statsInterval)
+  }
   if (process.platform !== 'darwin') app.quit()
 })
 
