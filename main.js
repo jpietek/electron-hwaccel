@@ -1,5 +1,42 @@
 // Modules to control application life and create native browser window
 const { app, BrowserWindow } = require('electron')
+<<<<<<< HEAD
+=======
+const path = require('node:path')
+const zmq = require('zeromq')
+
+// ZeroMQ REQ client setup
+const ZMQ_ENDPOINT = 'tcp://127.0.0.1:5555'
+const zmqClient = new zmq.Request()
+let zmqConnectPromise = null
+let zmqQueue = Promise.resolve()
+
+async function ensureZmqConnected () {
+  if (!zmqConnectPromise) {
+    zmqConnectPromise = (async () => {
+      await zmqClient.connect(ZMQ_ENDPOINT)
+    })().catch(err => {
+      console.error('ZMQ connect error:', err)
+      zmqConnectPromise = null
+      throw err
+    })
+  }
+  return zmqConnectPromise
+}
+
+function enqueueZmqSend (payload) {
+  const task = async () => {
+    await ensureZmqConnected()
+    const message = typeof payload === 'string' ? payload : JSON.stringify(payload)
+    await zmqClient.send(message)
+    const [reply] = await zmqClient.receive()
+    return reply
+  }
+  const next = zmqQueue.then(task, task)
+  zmqQueue = next.catch(() => {})
+  return next
+}
+>>>>>>> 1982a9e (add zmq)
 
 app.commandLine.appendSwitch('enable-gpu');
 app.commandLine.appendSwitch('no-sandbox');
@@ -44,6 +81,7 @@ function createWindow () {
   //osr.webContents.invalidate();	
 
   osr.loadURL("https://app.singular.live/output/6W76ei5ZNekKkYhe8nw5o8/Output?aspect=16:9")
+<<<<<<< HEAD
   osr.webContents.on('paint', (e, dirty, img) => {
     if (!e.texture) {
       console.log("skip null texture");
@@ -51,6 +89,16 @@ function createWindow () {
     }
     nonNullTexturePaintCount++;
     e.texture.release()
+=======
+  osr.webContents.on('paint', async (e, dirty, img) => {
+    try {
+      await enqueueZmqSend(e.texture)
+    } catch (err) {
+      console.error('ZMQ send/recv failed:', err)
+    } finally {
+      e.texture.release()
+    }
+>>>>>>> 1982a9e (add zmq)
   })
 
   //osr.webContents.openDevTools()
