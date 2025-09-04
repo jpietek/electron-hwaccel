@@ -22,9 +22,14 @@ async function ensureZmqConnected () {
       eventsLoopStarted = true
       ;(async () => {
         try {
-          for await (const [event, addr] of zmqClient.events) {
-            if (event === 'connect') connectedEndpoints.add(addr)
-            else if (event === 'disconnect') connectedEndpoints.delete(addr)
+          const eventsSource = zmqClient.events
+          if (eventsSource && typeof eventsSource[Symbol.asyncIterator] === 'function') {
+            for await (const ev of eventsSource) {
+              const type = ev && (ev.type || ev.event || ev[0])
+              const address = ev && (ev.address || ev.addr || ev.endpoint || ev[1])
+              if (type === 'connect') connectedEndpoints.add(address)
+              else if (type === 'disconnect') connectedEndpoints.delete(address)
+            }
           }
         } catch (err) {
           console.error('ZMQ events error:', err)
@@ -120,6 +125,7 @@ app.whenReady().then(() => {
   createWindow()
 
   app.on('activate', function () {
+
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
