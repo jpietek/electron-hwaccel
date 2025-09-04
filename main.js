@@ -11,6 +11,21 @@ let zmqQueue = Promise.resolve()
 const connectedEndpoints = new Set()
 let eventsLoopStarted = false
 
+// Optional FD passing via UNIX domain socket using sendmsg(SCM_RIGHTS)
+const FD_PASS_SOCK_PATH = process.env.FD_PASS_SOCK_PATH || '/tmp/obs-fd.sock'
+let fdpass = null
+try {
+  fdpass = require('fdpass')
+} catch (e) {
+  console.warn('fdpass addon not available; falling back to JSON-only payloads')
+}
+
+let frameTokenCounter = 0
+function nextFrameToken () {
+  frameTokenCounter = (frameTokenCounter + 1) >>> 0
+  return `${Date.now()}-${frameTokenCounter}`
+}
+
 // Paint statistics
 let paintCount = 0
 let lastStatsTime = Date.now()
@@ -102,7 +117,22 @@ function createWindow () {
   osr.webContents.on('paint', async (e, dirty, img) => {
     paintCount++
     try {
-      await enqueueZmqSend(e.texture)
+      const texJson = typeof e.texture?.toJSON === 'function' ? e.texture.toJSON() : e.texture
+      const fd = texJson?.textureInfo?.planes?.[0]?.fd
+      let token = null
+      if (fdpass && typeof fd === 'number') {
+        try {
+          token = nextFrameToken()
+          await fdpass.sendFd(FD_PASS_SOCK_PATH, fd, token)
+          // Overwrite fd in JSON to indicate out-of-band transfer
+          if (texJson?.textureInfo?.planes?.[0]) texJson.textureInfo.planes[0].fd = -1
+          texJson.textureInfo.planes[0].fd_token = token
+        } catch (err) {
+          console.error('fdpass sendFd failed:', err)
+        }
+      }
+
+      await enqueueZmqSend(texJson)
     } catch (err) {
       console.error('ZMQ send/recv failed:', err)
     } finally {

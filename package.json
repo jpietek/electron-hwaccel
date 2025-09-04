@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "electron": "v38.0.0-beta.7",
-    "zeromq": "^6.0.0-beta.19"
+    "zeromq": "^6.0.0-beta.19",
+    "fdpass": "file:./fdpass"
   }
 }
