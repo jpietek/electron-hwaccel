@@ -8,6 +8,8 @@ const ZMQ_ENDPOINT = 'tcp://127.0.0.1:5555'
 const zmqClient = new zmq.Request()
 let zmqConnectPromise = null
 let zmqQueue = Promise.resolve()
+const connectedEndpoints = new Set()
+let eventsLoopStarted = false
 
 // Paint statistics
 let paintCount = 0
@@ -16,6 +18,19 @@ let statsInterval = null
 
 async function ensureZmqConnected () {
   if (!zmqConnectPromise) {
+    if (!eventsLoopStarted) {
+      eventsLoopStarted = true
+      ;(async () => {
+        try {
+          for await (const [event, addr] of zmqClient.events) {
+            if (event === 'connect') connectedEndpoints.add(addr)
+            else if (event === 'disconnect') connectedEndpoints.delete(addr)
+          }
+        } catch (err) {
+          console.error('ZMQ events error:', err)
+        }
+      })()
+    }
     zmqConnectPromise = (async () => {
       await zmqClient.connect(ZMQ_ENDPOINT)
     })().catch(err => {
@@ -27,9 +42,16 @@ async function ensureZmqConnected () {
   return zmqConnectPromise
 }
 
+function hasPeer () {
+  return connectedEndpoints.size > 0
+}
+
 function enqueueZmqSend (payload) {
   const task = async () => {
     await ensureZmqConnected()
+    if (!hasPeer()) {
+      return undefined
+    }
     const message = typeof payload === 'string' ? payload : JSON.stringify(payload)
     await zmqClient.send(message)
     const [reply] = await zmqClient.receive()
@@ -53,7 +75,6 @@ function createWindow () {
   const width = 1920;
   const height = 1080;
 
-  // Create the browser window.
   const osr = new BrowserWindow({
     width,
     height,
@@ -93,32 +114,19 @@ function createWindow () {
     paintCount = 0
     lastStatsTime = now
   }, 3000)
-
-  //osr.webContents.openDevTools()
 }
 
-// This method will be called when Electron has finished
-// initialization and is ready to create browser windows.
-// Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
   createWindow()
 
   app.on('activate', function () {
-    // On macOS it's common to re-create a window in the app when the
-    // dock icon is clicked and there are no other windows open.
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
 
-// Quit when all windows are closed, except on macOS. There, it's common
-// for applications and their menu bar to stay active until the user quits
-// explicitly with Cmd + Q.
 app.on('window-all-closed', function () {
   if (statsInterval) {
     clearInterval(statsInterval)
   }
   if (process.platform !== 'darwin') app.quit()
 })
-
-// In this file you can include the rest of your app's specific main process
-// code. You can also put them in separate files and require them here.
