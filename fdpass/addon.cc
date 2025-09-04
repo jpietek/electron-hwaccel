@@ -45,10 +45,8 @@ Napi::Value SendFd(const Napi::CallbackInfo &info) {
   std::vector<char> buf(token.begin(), token.end());
   buf.push_back('\n');
 
-  struct {
-    struct cmsghdr cmsgh;
-    int fd;
-  } cmsg_buffer;
+  // Allocate control buffer with CMSG_SPACE to satisfy alignment
+  char control[CMSG_SPACE(sizeof(int))];
 
   struct iovec iov;
   iov.iov_base = buf.data();
@@ -59,14 +57,15 @@ Napi::Value SendFd(const Napi::CallbackInfo &info) {
   msg.msg_iov = &iov;
   msg.msg_iovlen = 1;
 
-  std::memset(&cmsg_buffer, 0, sizeof(cmsg_buffer));
-  msg.msg_control = &cmsg_buffer;
-  msg.msg_controllen = sizeof(cmsg_buffer);
-  
-  cmsg_buffer.cmsgh.cmsg_level = SOL_SOCKET;
-  cmsg_buffer.cmsgh.cmsg_type = SCM_RIGHTS;
-  cmsg_buffer.cmsgh.cmsg_len = CMSG_LEN(sizeof(int));
-  cmsg_buffer.fd = send_fd;
+  std::memset(control, 0, sizeof(control));
+  msg.msg_control = control;
+  msg.msg_controllen = sizeof(control);
+
+  struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+  cmsg->cmsg_level = SOL_SOCKET;
+  cmsg->cmsg_type = SCM_RIGHTS;
+  cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+  *reinterpret_cast<int *>(CMSG_DATA(cmsg)) = send_fd;
 
   ssize_t n = ::sendmsg(s, &msg, 0);
   int saved_errno = errno;
