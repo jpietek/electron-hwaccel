@@ -1,5 +1,6 @@
 // Modules to control application life and create native browser window
 const { app, BrowserWindow } = require('electron')
+const fs = require('node:fs')
 const path = require('node:path')
 const zmq = require('zeromq')
 
@@ -122,11 +123,15 @@ function createWindow () {
       let token = null
       if (fdpass && typeof fd === 'number') {
         try {
-          token = nextFrameToken()
-          await fdpass.sendFd(FD_PASS_SOCK_PATH, fd, token)
-          // Overwrite fd in JSON to indicate out-of-band transfer
-          if (texJson?.textureInfo?.planes?.[0]) texJson.textureInfo.planes[0].fd = -1
-          texJson.textureInfo.planes[0].fd_token = token
+          if (!fs.existsSync(FD_PASS_SOCK_PATH)) {
+            // Skip until receiver/socket exists
+          } else {
+            token = nextFrameToken()
+            await fdpass.sendFd(FD_PASS_SOCK_PATH, fd, token)
+            // Overwrite fd in JSON to indicate out-of-band transfer
+            if (texJson?.textureInfo?.planes?.[0]) texJson.textureInfo.planes[0].fd = -1
+            texJson.textureInfo.planes[0].fd_token = token
+          }
         } catch (err) {
           console.error('fdpass sendFd failed:', err)
         }
