@@ -115,7 +115,7 @@ function createWindow () {
     const now = Date.now()
     const elapsed = (now - lastStatsTime) / 1000 // seconds
     const paintsPerSecond = paintCount / elapsed
-    console.log(`Paint stats: ${paintCount} paints in ${elapsed.toFixed(1)}s = ${paintsPerSecond.toFixed(1)} paints/sec`)
+    console.log(`Paint stats: ${paintCount} paints in ${elapsed.toFixed(1)}s = ${paintsPerSecond.toFixed(1)} paints/sec, peers=${connectedEndpoints.size}`)
     paintCount = 0
     lastStatsTime = now
   }, 3000)
