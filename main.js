@@ -1,10 +1,8 @@
 // Modules to control application life and create native browser window
 const { app, BrowserWindow } = require('electron')
 const fs = require('node:fs')
-const path = require('node:path')
 const zmq = require('zeromq')
 
-// ZeroMQ REQ client setup
 const ZMQ_ENDPOINT = 'tcp://127.0.0.1:5555'
 const zmqClient = new zmq.Request()
 let zmqConnectPromise = null
@@ -12,8 +10,6 @@ let zmqQueue = Promise.resolve()
 const connectedEndpoints = new Set()
 let eventsLoopStarted = false
 
-// Optional FD passing via UNIX domain socket using sendmsg(SCM_RIGHTS)
-const FD_PASS_SOCK_PATH = process.env.FD_PASS_SOCK_PATH || '/tmp/obs-fd.sock'
 let fdpass = null
 try {
   fdpass = require('fdpass')
@@ -27,7 +23,6 @@ function nextFrameToken () {
   return `${Date.now()}-${frameTokenCounter}`
 }
 
-// Paint statistics
 let paintCount = 0
 let lastStatsTime = Date.now()
 let statsInterval = null
@@ -122,13 +117,13 @@ function createWindow () {
       const fd = texJson?.textureInfo?.planes?.[0]?.fd
       let token = null
       if (fdpass && typeof fd === 'number') {
+        const fdPassSocketPath = '/tmp/' + fd + '.sock'
         try {
-          if (!fs.existsSync(FD_PASS_SOCK_PATH)) {
+          if (!fs.existsSync(fdPassSocketPath)) {
             // Skip until receiver/socket exists
           } else {
             token = nextFrameToken()
-            await fdpass.sendFd(FD_PASS_SOCK_PATH, fd, token)
-            // Overwrite fd in JSON to indicate out-of-band transfer
+            await fdpass.sendFd(fdPassSocketPath, fd, token)
             if (texJson?.textureInfo?.planes?.[0]) texJson.textureInfo.planes[0].fd = -1
             texJson.textureInfo.planes[0].fd_token = token
           }
