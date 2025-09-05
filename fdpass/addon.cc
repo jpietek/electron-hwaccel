@@ -83,20 +83,14 @@ Napi::Value SendFd(const Napi::CallbackInfo &info) {
 }
 
 // Lazy EGL display init for creating/destroying EGLImages
-EGLDisplay get_or_init_egl_display(Napi::Env env) {
+EGLDisplay get_or_init_egl_display() {
   static EGLDisplay display = EGL_NO_DISPLAY;
   static bool initialized = false;
   if (!initialized) {
     display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-    if (display == EGL_NO_DISPLAY) {
-      Napi::Error::New(env, "eglGetDisplay(EGL_DEFAULT_DISPLAY) returned EGL_NO_DISPLAY").ThrowAsJavaScriptException();
-      return EGL_NO_DISPLAY;
-    }
+    if (display == EGL_NO_DISPLAY) return EGL_NO_DISPLAY;
     EGLint major = 0, minor = 0;
-    if (eglInitialize(display, &major, &minor) != EGL_TRUE) {
-      Napi::Error::New(env, "eglInitialize failed").ThrowAsJavaScriptException();
-      return EGL_NO_DISPLAY;
-    }
+    if (eglInitialize(display, &major, &minor) != EGL_TRUE) return EGL_NO_DISPLAY;
     initialized = true;
   }
   return display;
@@ -111,21 +105,29 @@ Napi::Value CreateEGLImageFromDMABuf(const Napi::CallbackInfo &info) {
   }
 
   Napi::Object opts = info[0].As<Napi::Object>();
-
-  auto requireProp = [&](const char *name) -> int {
+  auto getRequiredInt = [&](const char *name, int &out) -> bool {
     if (!opts.Has(name)) {
       Napi::TypeError::New(env, std::string("Missing required option: ") + name).ThrowAsJavaScriptException();
-      return 0;
+      return false;
     }
-    return opts.Get(name).As<Napi::Number>().Int32Value();
+    Napi::Value v = opts.Get(name);
+    if (!v.IsNumber()) {
+      Napi::TypeError::New(env, std::string("Expected number for option: ") + name).ThrowAsJavaScriptException();
+      return false;
+    }
+    out = v.As<Napi::Number>().Int32Value();
+    return true;
   };
 
-  int fd = requireProp("fd");
-  int width = requireProp("width");
-  int height = requireProp("height");
-  int fourcc = requireProp("fourcc");
-  int pitch = requireProp("pitch");
-  int offset = requireProp("offset");
+  int fd = -1, width = 0, height = 0, fourcc = 0, pitch = 0, offset = 0;
+  if (!getRequiredInt("fd", fd)) return env.Null();
+  if (!getRequiredInt("width", width)) return env.Null();
+  if (!getRequiredInt("height", height)) return env.Null();
+  if (!getRequiredInt("pitch", pitch)) return env.Null();
+  if (!getRequiredInt("offset", offset)) return env.Null();
+
+  // Hardcode to DRM_FORMAT_ARGB8888 ('AR24' = 0x34325241)
+  fourcc = 0x34325241;
 
   // Optional planes for semi/fully planar formats
   bool has_p1 = opts.Has("plane1Fd");
@@ -137,8 +139,9 @@ Napi::Value CreateEGLImageFromDMABuf(const Napi::CallbackInfo &info) {
   int p2_pitch = has_p2 ? opts.Get("plane2Pitch").As<Napi::Number>().Int32Value() : 0;
   int p2_offset = has_p2 ? opts.Get("plane2Offset").As<Napi::Number>().Int32Value() : 0;
 
-  EGLDisplay dpy = get_or_init_egl_display(env);
+  EGLDisplay dpy = get_or_init_egl_display();
   if (dpy == EGL_NO_DISPLAY) {
+    Napi::Error::New(env, "Failed to initialize EGL display").ThrowAsJavaScriptException();
     return env.Null();
   }
 
@@ -175,9 +178,9 @@ Napi::Value CreateEGLImageFromDMABuf(const Napi::CallbackInfo &info) {
 
   if (image == EGL_NO_IMAGE_KHR) {
     EGLint err = eglGetError();
-    Napi::Error::New(env, std::string("eglCreateImageKHR failed, error=0x") +
-                              ([](EGLint e){ char buf[16]; std::snprintf(buf, sizeof(buf), "%04X", e); return std::string(buf);} )(err))
-        .ThrowAsJavaScriptException();
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "0x%04X", err);
+    Napi::Error::New(env, std::string("eglCreateImageKHR failed, error=") + buf).ThrowAsJavaScriptException();
     return env.Null();
   }
 
@@ -199,8 +202,9 @@ Napi::Value DestroyEGLImage(const Napi::CallbackInfo &info) {
     return env.Null();
   }
 
-  EGLDisplay dpy = get_or_init_egl_display(env);
+  EGLDisplay dpy = get_or_init_egl_display();
   if (dpy == EGL_NO_DISPLAY) {
+    Napi::Error::New(env, "Failed to initialize EGL display").ThrowAsJavaScriptException();
     return env.Null();
   }
 
