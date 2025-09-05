@@ -124,7 +124,7 @@ function createWindow () {
       }*/
       const fd = e.texture.textureInfo.planes[0].fd;
       const fourcc = e.texture.textureInfo.planes[0].fourcc;
-      const pitch = e.texture.textureInfo.planes[0].pitch;
+      const pitch = e.texture.textureInfo.planes[0].stride;
       const offset = e.texture.textureInfo.planes[0].offset;;
       const imageHandle = await fdpass.createEGLImageFromDMABuf({ fd, width, height, fourcc, pitch, offset })
       console.log('imageHandle', imageHandle)
