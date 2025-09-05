@@ -17,6 +17,15 @@ async function sendFd (socketPath, fd) {
   })
 }
 
-module.exports = { sendFd }
+function createEGLImageFromDMABuf (opts) {
+  // Returns a BigInt representing the EGLImageKHR handle
+  return addon.createEGLImageFromDMABuf(opts)
+}
+
+function destroyEGLImage (imageHandle) {
+  return addon.destroyEGLImage(imageHandle)
+}
+
+module.exports = { sendFd, createEGLImageFromDMABuf, destroyEGLImage }
 
 

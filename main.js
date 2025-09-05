@@ -107,25 +107,29 @@ function createWindow () {
   osr.webContents.on('paint', async (e, dirty, img) => {
     paintCount++
     try {
-      const texJson = typeof e.texture?.toJSON === 'function' ? e.texture.toJSON() : e.texture
+      /*const texJson = typeof e.texture?.toJSON === 'function' ? e.texture.toJSON() : e.texture
       const fd = texJson?.textureInfo?.planes?.[0]?.fd
       if (fdpass && typeof fd === 'number') {
+        enqueueZmqSend(texJson);
         const fdPassSocketPath = '/tmp/' + fd + '.sock'
         try {
           if (!fs.existsSync(fdPassSocketPath)) {
             // Skip until receiver/socket exists
           } else {
             await fdpass.sendFd(fdPassSocketPath, fd)
-            if (texJson?.textureInfo?.planes?.[0]) texJson.textureInfo.planes[0].fd = -1
           }
         } catch (err) {
           console.error('fdpass sendFd failed:', err)
         }
-      }
-
-      await enqueueZmqSend(texJson)
+      }*/
+      const fd = e.texture.textureInfo.planes[0].fd;
+      const fourcc = e.texture.textureInfo.planes[0].fourcc;
+      const pitch = e.texture.textureInfo.planes[0].pitch;
+      const offset = e.texture.textureInfo.planes[0].offset;;
+      const imageHandle = await fdpass.createEGLImageFromDMABuf({ fd, width, height, fourcc, pitch, offset })
+      console.log('imageHandle', imageHandle)
     } catch (err) {
-      console.error('ZMQ send/recv failed:', err)
+      console.error('exception:', err);
     } finally {
       e.texture.release()
     }
