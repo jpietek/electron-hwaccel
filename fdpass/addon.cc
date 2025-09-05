@@ -110,7 +110,7 @@ bool ensure_egl_khr_image_funcs() {
   return p_eglCreateImageKHR != nullptr && p_eglDestroyImageKHR != nullptr;
 }
 
-// createEGLImageFromDMABuf({ fd, width, height, fourcc, pitch, offset, [plane1Fd, plane1Pitch, plane1Offset, plane2Fd, plane2Pitch, plane2Offset] })
+// createEGLImageFromDMABuf({ fd, width, height, pitch, offset })
 Napi::Value CreateEGLImageFromDMABuf(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   if (info.Length() < 1 || !info[0].IsObject()) {
@@ -143,16 +143,6 @@ Napi::Value CreateEGLImageFromDMABuf(const Napi::CallbackInfo &info) {
   // Hardcode to DRM_FORMAT_ARGB8888 ('AR24' = 0x34325241)
   fourcc = 0x34325241;
 
-  // Optional planes for semi/fully planar formats
-  bool has_p1 = opts.Has("plane1Fd");
-  bool has_p2 = opts.Has("plane2Fd");
-  int p1_fd = has_p1 ? opts.Get("plane1Fd").As<Napi::Number>().Int32Value() : -1;
-  int p1_pitch = has_p1 ? opts.Get("plane1Pitch").As<Napi::Number>().Int32Value() : 0;
-  int p1_offset = has_p1 ? opts.Get("plane1Offset").As<Napi::Number>().Int32Value() : 0;
-  int p2_fd = has_p2 ? opts.Get("plane2Fd").As<Napi::Number>().Int32Value() : -1;
-  int p2_pitch = has_p2 ? opts.Get("plane2Pitch").As<Napi::Number>().Int32Value() : 0;
-  int p2_offset = has_p2 ? opts.Get("plane2Offset").As<Napi::Number>().Int32Value() : 0;
-
   EGLDisplay dpy = get_or_init_egl_display();
   if (dpy == EGL_NO_DISPLAY) {
     Napi::Error::New(env, "Failed to initialize EGL display").ThrowAsJavaScriptException();
@@ -169,21 +159,10 @@ Napi::Value CreateEGLImageFromDMABuf(const Napi::CallbackInfo &info) {
   attrs.push_back(EGL_WIDTH); attrs.push_back(width);
   attrs.push_back(EGL_HEIGHT); attrs.push_back(height);
   attrs.push_back(EGL_LINUX_DRM_FOURCC_EXT); attrs.push_back(fourcc);
-  // Plane 0
+
   attrs.push_back(EGL_DMA_BUF_PLANE0_FD_EXT); attrs.push_back(fd);
   attrs.push_back(EGL_DMA_BUF_PLANE0_OFFSET_EXT); attrs.push_back(offset);
   attrs.push_back(EGL_DMA_BUF_PLANE0_PITCH_EXT); attrs.push_back(pitch);
-  // Optional YUV planes
-  if (has_p1) {
-    attrs.push_back(EGL_DMA_BUF_PLANE1_FD_EXT); attrs.push_back(p1_fd);
-    attrs.push_back(EGL_DMA_BUF_PLANE1_OFFSET_EXT); attrs.push_back(p1_offset);
-    attrs.push_back(EGL_DMA_BUF_PLANE1_PITCH_EXT); attrs.push_back(p1_pitch);
-  }
-  if (has_p2) {
-    attrs.push_back(EGL_DMA_BUF_PLANE2_FD_EXT); attrs.push_back(p2_fd);
-    attrs.push_back(EGL_DMA_BUF_PLANE2_OFFSET_EXT); attrs.push_back(p2_offset);
-    attrs.push_back(EGL_DMA_BUF_PLANE2_PITCH_EXT); attrs.push_back(p2_pitch);
-  }
 
   // Terminate attribute list
   attrs.push_back(EGL_NONE);
