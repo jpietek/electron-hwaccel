@@ -1,14 +1,12 @@
 // Modules to control application life and create native browser window
 const { app, BrowserWindow } = require('electron')
 const fs = require('node:fs')
-const zmq = require('zeromq')
+const net = require('node:net')
+const path = require('node:path')
 
-const ZMQ_ENDPOINT = 'tcp://127.0.0.1:5555'
-const zmqClient = new zmq.Request()
-let zmqConnectPromise = null
-let zmqQueue = Promise.resolve()
-const connectedEndpoints = new Set()
-let eventsLoopStarted = false
+const UDS_PATH = '/tmp/electron-hwaccel.sock'
+let udsSocket = null
+let udsConnectPromise = null
 
 let fdpass = null
 try {
@@ -21,55 +19,30 @@ let paintCount = 0
 let lastStatsTime = Date.now()
 let statsInterval = null
 
-async function ensureZmqConnected () {
-  if (!zmqConnectPromise) {
-    if (!eventsLoopStarted) {
-      eventsLoopStarted = true
-      ;(async () => {
-        try {
-          const eventsSource = zmqClient.events
-          if (eventsSource && typeof eventsSource[Symbol.asyncIterator] === 'function') {
-            for await (const ev of eventsSource) {
-              const type = ev && (ev.type || ev.event || ev[0])
-              const address = ev && (ev.address || ev.addr || ev.endpoint || ev[1])
-              if (type === 'connect') connectedEndpoints.add(address)
-              else if (type === 'disconnect') connectedEndpoints.delete(address)
-            }
-          }
-        } catch (err) {
-          console.error('ZMQ events error:', err)
-        }
-      })()
-    }
-    zmqConnectPromise = (async () => {
-      await zmqClient.connect(ZMQ_ENDPOINT)
-    })().catch(err => {
-      console.error('ZMQ connect error:', err)
-      zmqConnectPromise = null
-      throw err
-    })
-  }
-  return zmqConnectPromise
-}
+async function ensureUdsConnected () {
+  if (udsSocket && !udsSocket.destroyed) return udsSocket
+  if (udsConnectPromise) return udsConnectPromise
 
-function hasPeer () {
-  return connectedEndpoints.size > 0
-}
-
-function enqueueZmqSend (payload) {
-  const task = async () => {
-    await ensureZmqConnected()
-    if (!hasPeer()) {
-      return undefined
+  udsConnectPromise = new Promise((resolve, reject) => {
+    const socket = net.createConnection(UDS_PATH)
+    const onError = (err) => {
+      cleanup()
+      reject(err)
     }
-    const message = typeof payload === 'string' ? payload : JSON.stringify(payload)
-    await zmqClient.send(message)
-    const [reply] = await zmqClient.receive()
-    return reply
-  }
-  const next = zmqQueue.then(task, task)
-  zmqQueue = next.catch(() => {})
-  return next
+    const onConnect = () => {
+      cleanup()
+      udsSocket = socket
+      resolve(socket)
+    }
+    const cleanup = () => {
+      socket.off('error', onError)
+      socket.off('connect', onConnect)
+    }
+    socket.once('error', onError)
+    socket.once('connect', onConnect)
+  }).finally(() => { udsConnectPromise = null })
+
+  return udsConnectPromise
 }
 
 app.commandLine.appendSwitch('enable-gpu');
@@ -107,27 +80,17 @@ function createWindow () {
   osr.webContents.on('paint', async (e, dirty, img) => {
     paintCount++
     try {
-      /*const texJson = typeof e.texture?.toJSON === 'function' ? e.texture.toJSON() : e.texture
+      const texJson = typeof e.texture?.toJSON === 'function' ? e.texture.toJSON() : e.texture
       const fd = texJson?.textureInfo?.planes?.[0]?.fd
+      const socketPath = UDS_PATH
       if (fdpass && typeof fd === 'number') {
-        enqueueZmqSend(texJson);
-        const fdPassSocketPath = '/tmp/' + fd + '.sock'
         try {
-          if (!fs.existsSync(fdPassSocketPath)) {
-            // Skip until receiver/socket exists
-          } else {
-            await fdpass.sendFd(fdPassSocketPath, fd)
-          }
+          await ensureUdsConnected()
+          await fdpass.sendJsonWithFds(socketPath, texJson, [fd])
         } catch (err) {
-          console.error('fdpass sendFd failed:', err)
+          console.error('sendJsonWithFds failed:', err)
         }
-      }*/
-      const fd = e.texture.textureInfo.planes[0].fd;
-      const fourcc = e.texture.textureInfo.planes[0].fourcc;
-      const pitch = e.texture.textureInfo.planes[0].stride;
-      const offset = e.texture.textureInfo.planes[0].offset;;
-      const imageHandle = await fdpass.createEGLImageFromDMABuf({ fd, width, height, fourcc, pitch, offset })
-      console.log('imageHandle', imageHandle)
+      }
     } catch (err) {
       console.error('exception:', err);
     } finally {
@@ -140,7 +103,7 @@ function createWindow () {
     const now = Date.now()
     const elapsed = (now - lastStatsTime) / 1000 // seconds
     const paintsPerSecond = paintCount / elapsed
-    console.log(`Paint stats: ${paintCount} paints in ${elapsed.toFixed(1)}s = ${paintsPerSecond.toFixed(1)} paints/sec, peers=${connectedEndpoints.size}`)
+    console.log(`Paint stats: ${paintCount} paints in ${elapsed.toFixed(1)}s = ${paintsPerSecond.toFixed(1)} paints/sec`)
     paintCount = 0
     lastStatsTime = now
   }, 3000)

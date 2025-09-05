@@ -17,6 +17,18 @@ async function sendFd (socketPath, fd) {
   })
 }
 
+async function sendJsonWithFds (socketPath, jsonPayload, fds = []) {
+  return new Promise((resolve, reject) => {
+    try {
+      const payload = typeof jsonPayload === 'string' ? jsonPayload : JSON.stringify(jsonPayload)
+      addon.sendJsonWithFds(socketPath, payload, fds)
+      resolve()
+    } catch (err) {
+      reject(err)
+    }
+  })
+}
+
 function createEGLImageFromDMABuf (opts) {
   // Returns a BigInt representing the EGLImageKHR handle
   return addon.createEGLImageFromDMABuf(opts)
@@ -26,6 +38,6 @@ function destroyEGLImage (imageHandle) {
   return addon.destroyEGLImage(imageHandle)
 }
 
-module.exports = { sendFd, createEGLImageFromDMABuf, destroyEGLImage }
+module.exports = { sendFd, sendJsonWithFds, createEGLImageFromDMABuf, destroyEGLImage }
 
 

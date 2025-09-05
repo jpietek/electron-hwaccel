@@ -4,6 +4,10 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <vector>
+#include <cstring>
+#include <cerrno>
+#include <cstdint>
+#include <arpa/inet.h>
 
 // EGL dma-buf import (EGL_EXT_image_dma_buf_import)
 #define EGL_EGLEXT_PROTOTYPES
@@ -73,6 +77,105 @@ Napi::Value SendFd(const Napi::CallbackInfo &info) {
 
   ssize_t n = ::sendmsg(s, &msg, 0);
   int saved_errno = errno;
+  ::close(s);
+  if (n < 0) {
+    Napi::Error::New(env, std::string("sendmsg failed: ") + std::strerror(saved_errno)).ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  return env.Undefined();
+}
+
+// sendJsonWithFds(socketPath: string, jsonPayload: string, fds?: number[])
+Napi::Value SendJsonWithFds(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 2) {
+    Napi::TypeError::New(env, "Expected (socketPath: string, jsonPayload: string, fds?: number[])").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  if (!info[0].IsString() || !info[1].IsString()) {
+    Napi::TypeError::New(env, "socketPath and jsonPayload must be strings").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  std::string sock_path = info[0].As<Napi::String>().Utf8Value();
+  std::string payload   = info[1].As<Napi::String>().Utf8Value();
+
+  std::vector<int> fds;
+  if (info.Length() >= 3 && !info[2].IsUndefined() && !info[2].IsNull()) {
+    if (!info[2].IsArray()) {
+      Napi::TypeError::New(env, "fds must be an array of numbers").ThrowAsJavaScriptException();
+      return env.Null();
+    }
+    Napi::Array arr = info[2].As<Napi::Array>();
+    uint32_t len = arr.Length();
+    fds.reserve(len);
+    for (uint32_t i = 0; i < len; ++i) {
+      Napi::Value v = arr.Get(i);
+      if (!v.IsNumber()) continue;
+      fds.push_back(v.As<Napi::Number>().Int32Value());
+    }
+  }
+
+  int s = connect_unix_socket(sock_path);
+  if (s < 0) {
+    int saved_errno = errno;
+    Napi::Error::New(env, std::string("Failed to connect to UNIX socket: ") + std::strerror(saved_errno)).ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  // Frame: [u32_be length][JSON bytes]
+  const uint32_t json_len = static_cast<uint32_t>(payload.size());
+  std::vector<unsigned char> body;
+  body.resize(4 + json_len);
+  const uint32_t be_len = htonl(json_len);
+  std::memcpy(body.data(), &be_len, 4);
+  if (json_len > 0) {
+    std::memcpy(body.data() + 4, payload.data(), json_len);
+  }
+
+  struct iovec iov;
+  iov.iov_base = body.data();
+  iov.iov_len = body.size();
+
+  struct msghdr msg;
+  std::memset(&msg, 0, sizeof(msg));
+  msg.msg_iov = &iov;
+  msg.msg_iovlen = 1;
+
+  std::vector<char> control;
+  if (!fds.empty()) {
+    control.resize(CMSG_SPACE(sizeof(int) * fds.size()));
+    std::memset(control.data(), 0, control.size());
+    msg.msg_control = control.data();
+    msg.msg_controllen = control.size();
+
+    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int) * fds.size());
+    std::memcpy(CMSG_DATA(cmsg), fds.data(), sizeof(int) * fds.size());
+  }
+
+  ssize_t n = ::sendmsg(s, &msg, 0);
+  int saved_errno = errno;
+
+  // If partial data was sent on a stream socket, write the remainder
+  if (n >= 0 && static_cast<size_t>(n) < body.size()) {
+    size_t offset = static_cast<size_t>(n);
+    while (offset < body.size()) {
+      ssize_t wn = ::send(s, body.data() + offset, body.size() - offset, 0);
+      if (wn < 0) { saved_errno = errno; break; }
+      offset += static_cast<size_t>(wn);
+    }
+    if (static_cast<size_t>(n) < body.size() && saved_errno != 0) {
+      ::close(s);
+      Napi::Error::New(env, std::string("send failed: ") + std::strerror(saved_errno)).ThrowAsJavaScriptException();
+      return env.Null();
+    }
+  }
+
   ::close(s);
   if (n < 0) {
     Napi::Error::New(env, std::string("sendmsg failed: ") + std::strerror(saved_errno)).ThrowAsJavaScriptException();
@@ -222,6 +325,7 @@ Napi::Value DestroyEGLImage(const Napi::CallbackInfo &info) {
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("sendFd", Napi::Function::New(env, SendFd));
+  exports.Set("sendJsonWithFds", Napi::Function::New(env, SendJsonWithFds));
   exports.Set("createEGLImageFromDMABuf", Napi::Function::New(env, CreateEGLImageFromDMABuf));
   exports.Set("destroyEGLImage", Napi::Function::New(env, DestroyEGLImage));
   return exports;
