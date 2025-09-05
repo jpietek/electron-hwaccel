@@ -96,6 +96,20 @@ EGLDisplay get_or_init_egl_display() {
   return display;
 }
 
+// Resolve extension functions at runtime to avoid undefined symbol errors
+static PFNEGLCREATEIMAGEKHRPROC p_eglCreateImageKHR = nullptr;
+static PFNEGLDESTROYIMAGEKHRPROC p_eglDestroyImageKHR = nullptr;
+
+bool ensure_egl_khr_image_funcs() {
+  if (!p_eglCreateImageKHR) {
+    p_eglCreateImageKHR = reinterpret_cast<PFNEGLCREATEIMAGEKHRPROC>(eglGetProcAddress("eglCreateImageKHR"));
+  }
+  if (!p_eglDestroyImageKHR) {
+    p_eglDestroyImageKHR = reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(eglGetProcAddress("eglDestroyImageKHR"));
+  }
+  return p_eglCreateImageKHR != nullptr && p_eglDestroyImageKHR != nullptr;
+}
+
 // createEGLImageFromDMABuf({ fd, width, height, fourcc, pitch, offset, [plane1Fd, plane1Pitch, plane1Offset, plane2Fd, plane2Pitch, plane2Offset] })
 Napi::Value CreateEGLImageFromDMABuf(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
@@ -145,6 +159,11 @@ Napi::Value CreateEGLImageFromDMABuf(const Napi::CallbackInfo &info) {
     return env.Null();
   }
 
+  if (!ensure_egl_khr_image_funcs()) {
+    Napi::Error::New(env, "eglCreateImageKHR/eglDestroyImageKHR not available via eglGetProcAddress").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
   std::vector<EGLint> attrs;
   attrs.reserve(32);
   attrs.push_back(EGL_WIDTH); attrs.push_back(width);
@@ -169,7 +188,7 @@ Napi::Value CreateEGLImageFromDMABuf(const Napi::CallbackInfo &info) {
   // Terminate attribute list
   attrs.push_back(EGL_NONE);
 
-  EGLImageKHR image = eglCreateImageKHR(
+  EGLImageKHR image = p_eglCreateImageKHR(
       dpy,
       EGL_NO_CONTEXT,
       EGL_LINUX_DMA_BUF_EXT,
@@ -210,7 +229,11 @@ Napi::Value DestroyEGLImage(const Napi::CallbackInfo &info) {
 
   EGLImageKHR image = reinterpret_cast<EGLImageKHR>(handle);
   if (image != EGL_NO_IMAGE_KHR) {
-    if (eglDestroyImageKHR(dpy, image) != EGL_TRUE) {
+    if (!ensure_egl_khr_image_funcs()) {
+      Napi::Error::New(env, "eglDestroyImageKHR not available").ThrowAsJavaScriptException();
+      return env.Null();
+    }
+    if (p_eglDestroyImageKHR(dpy, image) != EGL_TRUE) {
       Napi::Error::New(env, "eglDestroyImageKHR failed").ThrowAsJavaScriptException();
       return env.Null();
     }
