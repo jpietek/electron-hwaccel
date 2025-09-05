@@ -17,12 +17,6 @@ try {
   console.warn('fdpass addon not available; falling back to JSON-only payloads')
 }
 
-let frameTokenCounter = 0
-function nextFrameToken () {
-  frameTokenCounter = (frameTokenCounter + 1) >>> 0
-  return `${Date.now()}-${frameTokenCounter}`
-}
-
 let paintCount = 0
 let lastStatsTime = Date.now()
 let statsInterval = null
@@ -115,17 +109,14 @@ function createWindow () {
     try {
       const texJson = typeof e.texture?.toJSON === 'function' ? e.texture.toJSON() : e.texture
       const fd = texJson?.textureInfo?.planes?.[0]?.fd
-      let token = null
       if (fdpass && typeof fd === 'number') {
         const fdPassSocketPath = '/tmp/' + fd + '.sock'
         try {
           if (!fs.existsSync(fdPassSocketPath)) {
             // Skip until receiver/socket exists
           } else {
-            token = nextFrameToken()
-            await fdpass.sendFd(fdPassSocketPath, fd, token)
+            await fdpass.sendFd(fdPassSocketPath, fd)
             if (texJson?.textureInfo?.planes?.[0]) texJson.textureInfo.planes[0].fd = -1
-            texJson.textureInfo.planes[0].fd_token = token
           }
         } catch (err) {
           console.error('fdpass sendFd failed:', err)

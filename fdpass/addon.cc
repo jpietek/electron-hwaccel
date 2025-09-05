@@ -26,14 +26,13 @@ int connect_unix_socket(const std::string &path) {
 
 Napi::Value SendFd(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
-  if (info.Length() < 3) {
-    Napi::TypeError::New(env, "Expected (socketPath: string, fd: number, token: string)").ThrowAsJavaScriptException();
+  if (info.Length() < 2) {
+    Napi::TypeError::New(env, "Expected (socketPath: string, fd: number)").ThrowAsJavaScriptException();
     return env.Null();
   }
 
   std::string sock_path = info[0].As<Napi::String>().Utf8Value();
   int send_fd = info[1].As<Napi::Number>().Int32Value();
-  std::string token = info[2].As<Napi::String>().Utf8Value();
 
   int s = connect_unix_socket(sock_path);
   if (s < 0) {
@@ -41,16 +40,15 @@ Napi::Value SendFd(const Napi::CallbackInfo &info) {
     return env.Null();
   }
 
-  // Compose a small message containing the token as payload
-  std::vector<char> buf(token.begin(), token.end());
-  buf.push_back('\n');
+  // Compose a minimal payload; some UNIXes require at least 1 byte with SCM_RIGHTS
+  char dummy = 0;
 
   // Allocate control buffer with CMSG_SPACE to satisfy alignment
   char control[CMSG_SPACE(sizeof(int))];
 
   struct iovec iov;
-  iov.iov_base = buf.data();
-  iov.iov_len = buf.size();
+  iov.iov_base = &dummy;
+  iov.iov_len = 1;
 
   struct msghdr msg;
   std::memset(&msg, 0, sizeof(msg));

@@ -5,11 +5,11 @@ const binary = require('node-gyp-build')
 
 const addon = binary(path.join(__dirname))
 
-async function sendFd (socketPath, fd, token) {
+async function sendFd (socketPath, fd) {
   // Wrap in a promise to keep async/await style at call-site
   return new Promise((resolve, reject) => {
     try {
-      addon.sendFd(socketPath, fd, token)
+      addon.sendFd(socketPath, fd)
       resolve()
     } catch (err) {
       reject(err)
