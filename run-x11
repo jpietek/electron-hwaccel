@@ -1,2 +1,2 @@
 #!/bin/bash
-DISPLAY=:0 node_modules/.bin/electron main.js --ozone-platform=x11 --use-angle=gl-egl
+DISPLAY=:0 node_modules/.bin/electron main.js --ozone-platform=x11 --use-angle=gl-egl $1
