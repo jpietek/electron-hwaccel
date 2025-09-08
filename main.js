@@ -19,7 +19,7 @@ function getCliPort (argv) {
 const CLI_PORT = getCliPort(process.argv)
 if (CLI_PORT != null) {
   ZMQ_ENDPOINT = `tcp://127.0.0.1:${CLI_PORT}`
-  FD_SOCK_PATH = `/tmp/electorn-hwaccel/${CLI_PORT}.sock`
+  FD_SOCK_PATH = `/tmp/electron-hwaccel/${CLI_PORT}.sock`
   try { fs.mkdirSync('/tmp/electron-hwaccel', { recursive: true }) } catch {}
 }
 
