@@ -21,6 +21,18 @@ let paintCount = 0
 let lastStatsTime = Date.now()
 let statsInterval = null
 
+// Serialize all FD sends to preserve ordering across frames
+let fdQueue = Promise.resolve()
+function enqueueSendFd (socketPath, fd) {
+  const task = async () => {
+    if (!fdpass) return
+    await fdpass.sendFd(socketPath, fd)
+  }
+  const next = fdQueue.then(task, task)
+  fdQueue = next.catch(() => {})
+  return next
+}
+
 async function ensureZmqConnected () {
   if (!zmqConnectPromise) {
     if (!eventsLoopStarted) {
@@ -111,7 +123,8 @@ function createWindow () {
       const fd = texJson?.textureInfo?.planes?.[0]?.fd
       if (fdpass && typeof fd === 'number') {
         const sockPath = '/tmp/electron-hwaccel.sock'
-        await fdpass.sendFd(sockPath, fd)
+        // Ensure FD is sent in strict order before enqueueing JSON
+        await enqueueSendFd(sockPath, fd)
         await enqueueZmqSend(texJson)
         
       }
