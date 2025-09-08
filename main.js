@@ -3,7 +3,31 @@ const { app, BrowserWindow } = require('electron')
 const fs = require('node:fs')
 const zmq = require('zeromq')
 
-const ZMQ_ENDPOINT = 'tcp://127.0.0.1:5555'
+let ZMQ_ENDPOINT = null
+let FD_SOCK_PATH = null 
+
+function getCliPort (argv) {
+  const args = Array.isArray(argv) ? argv.slice(2) : []
+  const idx = args.indexOf('-p')
+  if (idx !== -1 && args[idx + 1]) {
+    const n = parseInt(args[idx + 1], 10)
+    if (Number.isInteger(n) && n > 0 && n <= 65535) return n
+  }
+  return null
+}
+
+const CLI_PORT = getCliPort(process.argv)
+if (CLI_PORT != null) {
+  ZMQ_ENDPOINT = `tcp://127.0.0.1:${CLI_PORT}`
+  FD_SOCK_PATH = `/tmp/browser-hwaccel/${CLI_PORT}.sock`
+  try { fs.mkdirSync('/tmp/browser-hwaccel', { recursive: true }) } catch {}
+}
+
+if (!ZMQ_ENDPOINT || !FD_SOCK_PATH) {
+  console.error('ZMQ_ENDPOINT or FD_SOCK_PATH not set')
+  process.exit(1)
+}
+
 const zmqClient = new zmq.Request()
 let zmqConnectPromise = null
 let zmqQueue = Promise.resolve()
@@ -126,7 +150,7 @@ function createWindow () {
       const texJson = typeof e.texture?.toJSON === 'function' ? e.texture.toJSON() : e.texture
       const fd = texJson?.textureInfo?.planes?.[0]?.fd
       if (fdpass && typeof fd === 'number') {
-        const sockPath = '/tmp/electron-hwaccel.sock'
+        const sockPath = FD_SOCK_PATH
         // Ensure FD is sent in strict order before enqueueing JSON
         await enqueueSendFd(sockPath, fd)
         await enqueueZmqSend(texJson)
