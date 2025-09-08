@@ -107,27 +107,14 @@ function createWindow () {
   osr.webContents.on('paint', async (e, dirty, img) => {
     paintCount++
     try {
-      /*const texJson = typeof e.texture?.toJSON === 'function' ? e.texture.toJSON() : e.texture
+      const texJson = typeof e.texture?.toJSON === 'function' ? e.texture.toJSON() : e.texture
       const fd = texJson?.textureInfo?.planes?.[0]?.fd
       if (fdpass && typeof fd === 'number') {
-        enqueueZmqSend(texJson);
-        const fdPassSocketPath = '/tmp/' + fd + '.sock'
-        try {
-          if (!fs.existsSync(fdPassSocketPath)) {
-            // Skip until receiver/socket exists
-          } else {
-            await fdpass.sendFd(fdPassSocketPath, fd)
-          }
-        } catch (err) {
-          console.error('fdpass sendFd failed:', err)
-        }
-      }*/
-      const fd = e.texture.textureInfo.planes[0].fd;
-      const fourcc = e.texture.textureInfo.planes[0].fourcc;
-      const pitch = e.texture.textureInfo.planes[0].stride;
-      const offset = e.texture.textureInfo.planes[0].offset;;
-      const imageHandle = await fdpass.createEGLImageFromDMABuf({ fd, width, height, fourcc, pitch, offset })
-      console.log('imageHandle', imageHandle)
+        const sockPath = '/tmp/electron-hwaccel.sock'
+        await fdpass.sendFd(sockPath, fd)
+        await enqueueZmqSend(texJson)
+        
+      }
     } catch (err) {
       console.error('exception:', err);
     } finally {
@@ -158,6 +145,9 @@ app.whenReady().then(() => {
 app.on('window-all-closed', function () {
   if (statsInterval) {
     clearInterval(statsInterval)
+  }
+  if (fdpass && typeof fdpass.close === 'function') {
+    try { fdpass.close() } catch {}
   }
   if (process.platform !== 'darwin') app.quit()
 })

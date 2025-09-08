@@ -1,14 +1,11 @@
 #include <napi.h>
 #include <string>
+#include <vector>
+#include <cstring>
+#include <cerrno>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
-#include <vector>
-
-// EGL dma-buf import (EGL_EXT_image_dma_buf_import)
-#define EGL_EGLEXT_PROTOTYPES
-#include <EGL/egl.h>
-#include <EGL/eglext.h>
 
 namespace {
 
@@ -29,6 +26,18 @@ int connect_unix_socket(const std::string &path) {
   return fd;
 }
 
+static int g_sock = -1;
+static std::string g_sock_path;
+
+bool ensure_connected(const std::string &path, int &saved_errno) {
+  if (g_sock >= 0 && path == g_sock_path) return true;
+  if (g_sock >= 0) { ::close(g_sock); g_sock = -1; }
+  g_sock = connect_unix_socket(path);
+  saved_errno = errno;
+  if (g_sock >= 0) g_sock_path = path;
+  return g_sock >= 0;
+}
+
 Napi::Value SendFd(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   if (info.Length() < 2) {
@@ -39,9 +48,8 @@ Napi::Value SendFd(const Napi::CallbackInfo &info) {
   std::string sock_path = info[0].As<Napi::String>().Utf8Value();
   int send_fd = info[1].As<Napi::Number>().Int32Value();
 
-  int s = connect_unix_socket(sock_path);
-  if (s < 0) {
-    int saved_errno = errno;
+  int saved_errno = 0;
+  if (!ensure_connected(sock_path, saved_errno)) {
     Napi::Error::New(env, std::string("Failed to connect to UNIX socket: ") + std::strerror(saved_errno)).ThrowAsJavaScriptException();
     return env.Null();
   }
@@ -71,159 +79,32 @@ Napi::Value SendFd(const Napi::CallbackInfo &info) {
   cmsg->cmsg_len = CMSG_LEN(sizeof(int));
   *reinterpret_cast<int *>(CMSG_DATA(cmsg)) = send_fd;
 
-  ssize_t n = ::sendmsg(s, &msg, 0);
-  int saved_errno = errno;
-  ::close(s);
-  if (n < 0) {
-    Napi::Error::New(env, std::string("sendmsg failed: ") + std::strerror(saved_errno)).ThrowAsJavaScriptException();
-    return env.Null();
-  }
-
-  return env.Undefined();
-}
-
-// Lazy EGL display init for creating/destroying EGLImages
-EGLDisplay get_or_init_egl_display() {
-  static EGLDisplay display = EGL_NO_DISPLAY;
-  static bool initialized = false;
-  if (!initialized) {
-    display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-    if (display == EGL_NO_DISPLAY) return EGL_NO_DISPLAY;
-    EGLint major = 0, minor = 0;
-    if (eglInitialize(display, &major, &minor) != EGL_TRUE) return EGL_NO_DISPLAY;
-    initialized = true;
-  }
-  return display;
-}
-
-// Resolve extension functions at runtime to avoid undefined symbol errors
-static PFNEGLCREATEIMAGEKHRPROC p_eglCreateImageKHR = nullptr;
-static PFNEGLDESTROYIMAGEKHRPROC p_eglDestroyImageKHR = nullptr;
-
-bool ensure_egl_khr_image_funcs() {
-  if (!p_eglCreateImageKHR) {
-    p_eglCreateImageKHR = reinterpret_cast<PFNEGLCREATEIMAGEKHRPROC>(eglGetProcAddress("eglCreateImageKHR"));
-  }
-  if (!p_eglDestroyImageKHR) {
-    p_eglDestroyImageKHR = reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(eglGetProcAddress("eglDestroyImageKHR"));
-  }
-  return p_eglCreateImageKHR != nullptr && p_eglDestroyImageKHR != nullptr;
-}
-
-// createEGLImageFromDMABuf({ fd, width, height, pitch, offset })
-Napi::Value CreateEGLImageFromDMABuf(const Napi::CallbackInfo &info) {
-  Napi::Env env = info.Env();
-  if (info.Length() < 1 || !info[0].IsObject()) {
-    Napi::TypeError::New(env, "Expected single options object").ThrowAsJavaScriptException();
-    return env.Null();
-  }
-
-  Napi::Object opts = info[0].As<Napi::Object>();
-  auto getRequiredInt = [&](const char *name, int &out) -> bool {
-    if (!opts.Has(name)) {
-      Napi::TypeError::New(env, std::string("Missing required option: ") + name).ThrowAsJavaScriptException();
-      return false;
-    }
-    Napi::Value v = opts.Get(name);
-    if (!v.IsNumber()) {
-      Napi::TypeError::New(env, std::string("Expected number for option: ") + name).ThrowAsJavaScriptException();
-      return false;
-    }
-    out = v.As<Napi::Number>().Int32Value();
+  auto do_send = [&]() -> bool {
+    ssize_t n = ::sendmsg(g_sock, &msg, 0);
+    if (n < 0) { saved_errno = errno; return false; }
     return true;
   };
 
-  int fd = -1, width = 0, height = 0, fourcc = 0, pitch = 0, offset = 0;
-  if (!getRequiredInt("fd", fd)) return env.Null();
-  if (!getRequiredInt("width", width)) return env.Null();
-  if (!getRequiredInt("height", height)) return env.Null();
-  if (!getRequiredInt("pitch", pitch)) return env.Null();
-  if (!getRequiredInt("offset", offset)) return env.Null();
-
-  // Hardcode to DRM_FORMAT_ARGB8888 ('AR24' = 0x34325241)
-  fourcc = 0x34325241;
-
-  EGLDisplay dpy = get_or_init_egl_display();
-  if (dpy == EGL_NO_DISPLAY) {
-    Napi::Error::New(env, "Failed to initialize EGL display").ThrowAsJavaScriptException();
-    return env.Null();
+  if (!do_send()) {
+    // Try one reconnect once on failure
+    ::close(g_sock); g_sock = -1;
+    if (!ensure_connected(sock_path, saved_errno) || !do_send()) {
+      Napi::Error::New(env, std::string("sendmsg failed: ") + std::strerror(saved_errno)).ThrowAsJavaScriptException();
+      return env.Null();
+    }
   }
 
-  if (!ensure_egl_khr_image_funcs()) {
-    Napi::Error::New(env, "eglCreateImageKHR/eglDestroyImageKHR not available via eglGetProcAddress").ThrowAsJavaScriptException();
-    return env.Null();
-  }
-
-  std::vector<EGLint> attrs;
-  attrs.reserve(32);
-  attrs.push_back(EGL_WIDTH); attrs.push_back(width);
-  attrs.push_back(EGL_HEIGHT); attrs.push_back(height);
-  attrs.push_back(EGL_LINUX_DRM_FOURCC_EXT); attrs.push_back(fourcc);
-
-  attrs.push_back(EGL_DMA_BUF_PLANE0_FD_EXT); attrs.push_back(fd);
-  attrs.push_back(EGL_DMA_BUF_PLANE0_OFFSET_EXT); attrs.push_back(offset);
-  attrs.push_back(EGL_DMA_BUF_PLANE0_PITCH_EXT); attrs.push_back(pitch);
-
-  // Terminate attribute list
-  attrs.push_back(EGL_NONE);
-
-  EGLImageKHR image = p_eglCreateImageKHR(
-      dpy,
-      EGL_NO_CONTEXT,
-      EGL_LINUX_DMA_BUF_EXT,
-      (EGLClientBuffer) nullptr,
-      attrs.data());
-
-  if (image == EGL_NO_IMAGE_KHR) {
-    EGLint err = eglGetError();
-    char buf[32];
-    std::snprintf(buf, sizeof(buf), "0x%04X", err);
-    Napi::Error::New(env, std::string("eglCreateImageKHR failed, error=") + buf).ThrowAsJavaScriptException();
-    return env.Null();
-  }
-
-  // Return the opaque EGLImageKHR handle as a BigInt (uint64)
-  uint64_t handle = reinterpret_cast<uint64_t>(image);
-  return Napi::BigInt::New(env, handle);
+  return env.Undefined();
 }
 
-Napi::Value DestroyEGLImage(const Napi::CallbackInfo &info) {
-  Napi::Env env = info.Env();
-  if (info.Length() < 1 || !info[0].IsBigInt()) {
-    Napi::TypeError::New(env, "Expected (imageHandle: bigint)").ThrowAsJavaScriptException();
-    return env.Null();
-  }
-  bool lossless = false;
-  uint64_t handle = info[0].As<Napi::BigInt>().Uint64Value(&lossless);
-  if (!lossless) {
-    Napi::TypeError::New(env, "imageHandle bigint not lossless").ThrowAsJavaScriptException();
-    return env.Null();
-  }
-
-  EGLDisplay dpy = get_or_init_egl_display();
-  if (dpy == EGL_NO_DISPLAY) {
-    Napi::Error::New(env, "Failed to initialize EGL display").ThrowAsJavaScriptException();
-    return env.Null();
-  }
-
-  EGLImageKHR image = reinterpret_cast<EGLImageKHR>(handle);
-  if (image != EGL_NO_IMAGE_KHR) {
-    if (!ensure_egl_khr_image_funcs()) {
-      Napi::Error::New(env, "eglDestroyImageKHR not available").ThrowAsJavaScriptException();
-      return env.Null();
-    }
-    if (p_eglDestroyImageKHR(dpy, image) != EGL_TRUE) {
-      Napi::Error::New(env, "eglDestroyImageKHR failed").ThrowAsJavaScriptException();
-      return env.Null();
-    }
-  }
-  return env.Undefined();
+Napi::Value Close(const Napi::CallbackInfo &info) {
+  if (g_sock >= 0) { ::close(g_sock); g_sock = -1; g_sock_path.clear(); }
+  return info.Env().Undefined();
 }
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("sendFd", Napi::Function::New(env, SendFd));
-  exports.Set("createEGLImageFromDMABuf", Napi::Function::New(env, CreateEGLImageFromDMABuf));
-  exports.Set("destroyEGLImage", Napi::Function::New(env, DestroyEGLImage));
+  exports.Set("close", Napi::Function::New(env, Close));
   return exports;
 }
 
