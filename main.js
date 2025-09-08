@@ -47,13 +47,31 @@ let statsInterval = null
 let paintDurTotalUs = 0
 let paintDurMinUs = Infinity
 let paintDurMaxUs = 0
+let lastFdSocketWarnMs = 0
+
+function warnFdSocketNotReady (socketPath) {
+  const now = Date.now()
+  if (now - lastFdSocketWarnMs >= 3000) {
+    console.warn(`FD socket not ready yet: ${socketPath}`)
+    lastFdSocketWarnMs = now
+  }
+}
 
 // Serialize all FD sends to preserve ordering across frames
 let fdQueue = Promise.resolve()
 function enqueueSendFd (socketPath, fd) {
   const task = async () => {
     if (!fdpass) return
-    await fdpass.sendFd(socketPath, fd)
+    try {
+      await fdpass.sendFd(socketPath, fd)
+    } catch (err) {
+      const msg = String(err && (err.message || err))
+      if (/Failed to connect to UNIX socket|No such file or directory/i.test(msg)) {
+        warnFdSocketNotReady(socketPath)
+        return
+      }
+      throw err
+    }
   }
   const next = fdQueue.then(task, task)
   fdQueue = next.catch(() => {})
