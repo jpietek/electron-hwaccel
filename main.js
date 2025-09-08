@@ -153,7 +153,8 @@ function createWindow () {
         const sockPath = FD_SOCK_PATH
         // Ensure FD is sent in strict order before enqueueing JSON
         await enqueueSendFd(sockPath, fd)
-        await enqueueZmqSend(texJson)
+        // await here seems to long TODO: why?
+        enqueueZmqSend(texJson)
         
       }
     } catch (err) {
