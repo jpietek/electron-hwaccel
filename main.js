@@ -20,6 +20,9 @@ try {
 let paintCount = 0
 let lastStatsTime = Date.now()
 let statsInterval = null
+let paintDurTotalUs = 0
+let paintDurMinUs = Infinity
+let paintDurMaxUs = 0
 
 // Serialize all FD sends to preserve ordering across frames
 let fdQueue = Promise.resolve()
@@ -117,6 +120,7 @@ function createWindow () {
 
   osr.loadURL("https://app.singular.live/output/6W76ei5ZNekKkYhe8nw5o8/Output?aspect=16:9")
   osr.webContents.on('paint', async (e, dirty, img) => {
+    const t0 = process.hrtime.bigint()
     paintCount++
     try {
       const texJson = typeof e.texture?.toJSON === 'function' ? e.texture.toJSON() : e.texture
@@ -132,6 +136,10 @@ function createWindow () {
       console.error('exception:', err);
     } finally {
       e.texture.release()
+      const dtUs = Number(process.hrtime.bigint() - t0) / 1000
+      paintDurTotalUs += dtUs
+      if (dtUs < paintDurMinUs) paintDurMinUs = dtUs
+      if (dtUs > paintDurMaxUs) paintDurMaxUs = dtUs
     }
   })
 
@@ -140,9 +148,15 @@ function createWindow () {
     const now = Date.now()
     const elapsed = (now - lastStatsTime) / 1000 // seconds
     const paintsPerSecond = paintCount / elapsed
-    console.log(`Paint stats: ${paintCount} paints in ${elapsed.toFixed(1)}s = ${paintsPerSecond.toFixed(1)} paints/sec, peers=${connectedEndpoints.size}`)
+    const avgUs = paintCount > 0 ? (paintDurTotalUs / paintCount) : 0
+    const minUs = Number.isFinite(paintDurMinUs) ? paintDurMinUs : 0
+    const maxUs = paintDurMaxUs
+    console.log(`Paint stats: ${paintCount} paints in ${elapsed.toFixed(1)}s = ${paintsPerSecond.toFixed(1)} paints/sec, peers=${connectedEndpoints.size}, paint_us min=${minUs.toFixed(1)} max=${maxUs.toFixed(1)} avg=${avgUs.toFixed(1)}`)
     paintCount = 0
     lastStatsTime = now
+    paintDurTotalUs = 0
+    paintDurMinUs = Infinity
+    paintDurMaxUs = 0
   }, 3000)
 }
 
